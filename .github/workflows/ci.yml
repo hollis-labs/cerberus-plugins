@@ -1,7 +1,3 @@
-# NOTE: this workflow cannot pass yet. contextforge/go.mod carries a `replace`
-# pointing at a local Cerberus checkout, because pkg/plugin landed after
-# v0.4.0-beta.1 and is not in a published tag. Publish a tag containing
-# pkg/plugin, drop the replace, and this becomes live.
 name: CI
 
 on:
