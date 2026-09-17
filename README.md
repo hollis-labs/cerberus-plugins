@@ -71,11 +71,16 @@ contract is missing a piece — raise it against Cerberus rather than reaching i
 - **The host redacts `/(?i)\bBearer[ \t]+\S+/` on every error path.** An error
   message containing the word "bearer" followed by a word arrives at the
   operator garbled. Word auth guidance around it.
-- **The host passes no config or secrets to a plugin subprocess.**
-  `SDKInitParams.Config` is always empty today, and the launch environment is a
-  fixed allow-list carrying no credentials. A plugin resolves its own secret
-  from the keychain (`go-keyring`, service `cerberus`), which is what
-  `contextforge` does.
+- **Declare your secrets; do not resolve them.** The host resolves every secret
+  a plugin's manifest declares under `config.secrets` — through the same
+  process-env / `connector-secrets.yaml` / keychain chain a built-in connector
+  uses — and passes the values in `SDKInitParams.Config`, keyed by the secret
+  name. Read them with `subprocess.NewConfigReader(params.Config).Secret(name)`,
+  which also registers the value with the logger's redaction tracker. The launch
+  environment is still a fixed allow-list carrying no credentials: env is
+  ambient, so a credential there would reach every plugin rather than the one
+  that declared it. A missing secret does not fail the load; the operation that
+  needed it reports `credential_missing`.
 - **Name the thing that actually failed.** A refused connection on a local
   tunnel port means the tunnel is down, not the remote service. Telling an
   operator "gateway is down" sends them to the wrong host.
