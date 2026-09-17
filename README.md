@@ -17,9 +17,10 @@ on someone else's schedule. The primitives the control plane is built on
 One directory per plugin, each its own Go module:
 
 ```
-contextforge/          the plugin module
+contextforge/          a plugin module
   cmd/<binary>/        entrypoint; also generates plugin.yaml
   internal/cfplugin/   backend, DTOs, connector definition, subprocess handler
+azure/                 another, same shape
 dist/<plugin>/         built, installable plugin directory (gitignored)
 ```
 
@@ -90,3 +91,4 @@ contract is missing a piece — raise it against Cerberus rather than reaching i
 | Plugin | Status | Notes |
 |---|---|---|
 | `contextforge` | read-only operations | Adtran MCP gateway. See `contextforge/README.md`. |
+| `azure` | read-only operations | Azure inventory and AI model deployments. See `azure/README.md`. |
