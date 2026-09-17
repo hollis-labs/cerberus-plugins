@@ -1,0 +1,52 @@
+# NOTE: this workflow cannot pass yet. contextforge/go.mod carries a `replace`
+# pointing at a local Cerberus checkout, because pkg/plugin landed after
+# v0.4.0-beta.1 and is not in a published tag. Publish a tag containing
+# pkg/plugin, drop the replace, and this becomes live.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # One job per plugin: each is its own module and they must not be able
+        # to break each other's build.
+        plugin: [contextforge]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.plugin }}/go.mod
+          cache-dependency-path: ${{ matrix.plugin }}/go.sum
+
+      # Cerberus is a private module; a token with read access is required
+      # until it is published.
+      - name: Configure module access
+        run: |
+          go env -w GOPRIVATE=github.com/hollis-labs/*
+          git config --global url."https://x-access-token:${{ secrets.HOLLIS_LABS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Verify formatting
+        working-directory: ${{ matrix.plugin }}
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - name: Vet
+        working-directory: ${{ matrix.plugin }}
+        run: go vet ./...
+
+      - name: Test
+        working-directory: ${{ matrix.plugin }}
+        run: go test ./...
+
+      # Proves the manifest the host would install is valid, and that the
+      # entrypoint actually builds.
+      - name: Build installable dist
+        working-directory: ${{ matrix.plugin }}
+        run: make dist
