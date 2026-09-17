@@ -44,6 +44,11 @@ installs cannot drift from the operations the plugin actually serves.
 
 ## Writing a plugin
 
+Cerberus is a private module, so `go env -w GOPRIVATE=github.com/hollis-labs/*`
+once and `go get` works for anyone with repository access. No `replace`
+directive is needed; add one only for convenience when developing beside a local
+Cerberus checkout.
+
 A plugin imports exactly four things from the Cerberus side:
 
 ```go
