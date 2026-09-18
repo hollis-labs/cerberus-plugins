@@ -2,6 +2,14 @@
 
 Connector plugins for [Cerberus](https://github.com/hollis-labs/cerberus).
 
+> **Pre-release.** Every plugin here is at `0.1.x` and read-only: none
+> implements a write, lifecycle or destructive operation yet. They run in
+> active internal use, but there are no outside users, no compatibility
+> guarantees and no support channel. The plugin authoring contract
+> (`pkg/plugin`, `pkg/connector`) is itself pre-release and can change with
+> Cerberus. Built in the open: interfaces and behavior can change without
+> notice. Each plugin's README carries its own status.
+
 A plugin is a standalone binary the Cerberus host launches as a subprocess. It
 declares its operations in a manifest, and the host turns each one into a CLI
 command, an HTTP API operation and an MCP tool — the same surface a compiled-in
@@ -90,5 +98,6 @@ contract is missing a piece — raise it against Cerberus rather than reaching i
 
 | Plugin | Status | Notes |
 |---|---|---|
-| `contextforge` | read-only operations | Adtran MCP gateway. See `contextforge/README.md`. |
+| `contextforge` | read-only operations | MCP gateway administration. See `contextforge/README.md`. |
 | `azure` | read-only operations | Azure inventory and AI model deployments. See `azure/README.md`. |
+| `kubernetes` | read-only operations | Cluster inspection. See `kubernetes/README.md`. |
