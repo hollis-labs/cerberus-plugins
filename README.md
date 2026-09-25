@@ -103,3 +103,4 @@ contract is missing a piece — raise it against Cerberus rather than reaching i
 | `azure` | read-only operations | Azure inventory and AI model deployments. See `azure/README.md`. |
 | `kubernetes` | reads, plus writes behind `--ack` with server-side dry run | Cluster inspection and administration. See `kubernetes/README.md`. |
 | `cloudflare` | reads, plus writes behind `--ack` with a plugin-served dry run | Zones and DNS records. Replaces the connector Cerberus compiled in, under the same id, so it installs only on a host without that built-in. See `cloudflare/README.md`. |
+| `digitalocean` | reads, plus writes and power actions behind `--ack`, with a plugin-served dry run | Droplets. Replaces the connector Cerberus compiled in, under the same id, so it installs only on a host without that built-in. See `digitalocean/README.md`. |
