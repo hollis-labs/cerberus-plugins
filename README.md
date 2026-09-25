@@ -100,4 +100,4 @@ contract is missing a piece — raise it against Cerberus rather than reaching i
 |---|---|---|
 | `contextforge` | read-only operations | MCP gateway administration. See `contextforge/README.md`. |
 | `azure` | read-only operations | Azure inventory and AI model deployments. See `azure/README.md`. |
-| `kubernetes` | read-only operations | Cluster inspection. See `kubernetes/README.md`. |
+| `kubernetes` | reads, plus writes behind `--ack` with server-side dry run | Cluster inspection and administration. See `kubernetes/README.md`. |
