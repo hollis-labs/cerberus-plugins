@@ -102,3 +102,4 @@ contract is missing a piece — raise it against Cerberus rather than reaching i
 | `contextforge` | read-only operations | MCP gateway administration. See `contextforge/README.md`. |
 | `azure` | read-only operations | Azure inventory and AI model deployments. See `azure/README.md`. |
 | `kubernetes` | reads, plus writes behind `--ack` with server-side dry run | Cluster inspection and administration. See `kubernetes/README.md`. |
+| `cloudflare` | reads, plus writes behind `--ack` with a plugin-served dry run | Zones and DNS records. Replaces the connector Cerberus compiled in, under the same id, so it installs only on a host without that built-in. See `cloudflare/README.md`. |
