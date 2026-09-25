@@ -41,7 +41,7 @@ dist/<plugin>/         built, installable plugin directory (gitignored)
 make dist
 cerberus connectors plugin managed install "$PWD/dist/contextforge"
 cerberus connectors plugin managed load contextforge
-cerberus connectors plugin managed exec contextforge get_health
+cerberus connectors exec contextforge get_health
 ```
 
 A local install records `origin: installed`. Cerberus does not sign or vet
