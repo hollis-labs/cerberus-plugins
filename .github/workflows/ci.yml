@@ -13,7 +13,7 @@ jobs:
       matrix:
         # One job per plugin: each is its own module and they must not be able
         # to break each other's build.
-        plugin: [contextforge, azure, kubernetes, cloudflare, digitalocean]
+        plugin: [contextforge, azure, kubernetes, cloudflare, digitalocean, namecheap]
     steps:
       - uses: actions/checkout@v4
 
