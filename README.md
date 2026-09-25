@@ -44,13 +44,38 @@ cerberus connectors plugin managed load contextforge
 cerberus connectors exec contextforge get_health
 ```
 
-A local install records `origin: installed`. Cerberus does not sign or vet
-plugins, so there are no trust flags. Every destructive operation requires
-`--ack`, whatever the manifest declares.
+`managed install` is an interactive review in your terminal: Cerberus shows
+what the plugin declares and installs it once you type the plugin id. It copies
+the bundle into `~/.cerberus/plugins/<id>/<digest>/` and checks that digest on
+every load, so **a rebuilt `dist/` is not picked up until you install it again**.
+The re-install shows an upgrade diff. Cerberus does not sign or vet plugins,
+so there are no trust flags. Every operation that changes something requires
+`--ack`, whatever the manifest declares. See Cerberus's `docs/plugins.md`.
 
 `dist/<plugin>/plugin.yaml` is generated from the connector definition by the
 plugin binary itself (`<binary> write-dist <dir>`), so the manifest the host
 installs cannot drift from the operations the plugin actually serves.
+
+### Install review declarations
+
+Beside the connector manifest, every plugin here declares what the install
+review shows (`internal/<pkg>/declarations.go`). With all of them declared, the
+review has no gaps, and `TestInstallReviewShowsNoGaps` holds each plugin to
+that:
+
+- `host`: the Cerberus contract range, `min_contract: 1, max_contract: 1`.
+- `suggested_policy`: what we suggest the operator require for the risky
+  operations. Cerberus shows it and never applies it.
+- `surfaces`: plain reads suggested for MCP (the operator still opts each one
+  in), plus the operations that must never reach MCP (`cli_only`).
+- `telemetry`: the events each operation that changes something reports into
+  its audit record (`internal/<pkg>/telemetry.go`). These are a change, or a
+  preview on a dry run; kubernetes reports each field of its `Change` and each
+  warning. `TestOperationsReportTheirDeclaredTelemetry` checks that what is
+  declared is what is sent.
+
+A new operation that changes something needs a telemetry declaration, or the
+no-gaps test fails.
 
 ## Writing a plugin
 
