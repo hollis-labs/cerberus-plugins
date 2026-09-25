@@ -44,8 +44,9 @@ cerberus connectors plugin managed load contextforge
 cerberus connectors plugin managed exec contextforge get_health
 ```
 
-Unsigned local installs need no trust flags and record `trust_tier: unsigned`.
-Destructive operations still require `--ack`.
+A local install records `origin: installed`. Cerberus does not sign or vet
+plugins, so there are no trust flags. Every destructive operation requires
+`--ack`, whatever the manifest declares.
 
 `dist/<plugin>/plugin.yaml` is generated from the connector definition by the
 plugin binary itself (`<binary> write-dist <dir>`), so the manifest the host
