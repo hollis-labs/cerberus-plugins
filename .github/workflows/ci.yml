@@ -22,13 +22,6 @@ jobs:
           go-version-file: ${{ matrix.plugin }}/go.mod
           cache-dependency-path: ${{ matrix.plugin }}/go.sum
 
-      # Cerberus is a private module; a token with read access is required
-      # until it is published.
-      - name: Configure module access
-        run: |
-          go env -w GOPRIVATE=github.com/hollis-labs/*
-          git config --global url."https://x-access-token:${{ secrets.HOLLIS_LABS_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
       - name: Verify formatting
         working-directory: ${{ matrix.plugin }}
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
