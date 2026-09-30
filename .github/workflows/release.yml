@@ -1,0 +1,57 @@
+name: Release
+
+# Pushing <plugin>/vX.Y.Z publishes that plugin's GitHub release: one
+# installable bundle per platform and SHA256SUMS. The version must match the
+# one the plugin stamps into plugin.yaml; scripts/release-bundle.sh refuses
+# otherwise.
+on:
+  push:
+    tags: ['*/v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse tag
+        id: tag
+        run: |
+          tag="$GITHUB_REF_NAME"
+          plugin="${tag%%/*}"
+          version="${tag#*/v}"
+          echo "plugin=$plugin" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ steps.tag.outputs.plugin }}/go.mod
+          cache-dependency-path: ${{ steps.tag.outputs.plugin }}/go.sum
+
+      - name: Build bundles
+        run: scripts/release-bundle.sh "${{ steps.tag.outputs.plugin }}" "${{ steps.tag.outputs.version }}" out
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLUGIN: ${{ steps.tag.outputs.plugin }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          cat > notes.md <<EOF
+          \`$PLUGIN\` plugin $VERSION for Cerberus.
+
+          Each tarball extracts to an installable plugin directory, \`$PLUGIN/\` (plugin.yaml beside bin/). Verify, extract and install:
+
+          \`\`\`bash
+          shasum -a 256 -c SHA256SUMS --ignore-missing
+          tar -xzf $PLUGIN-$VERSION-<os>-<arch>.tar.gz
+          cerberus connectors plugin managed install "\$PWD/$PLUGIN"
+          \`\`\`
+
+          See $PLUGIN/README.md for what the plugin does and which secrets it declares.
+          EOF
+          gh release create "$GITHUB_REF_NAME" out/*.tar.gz out/SHA256SUMS \
+            --title "$PLUGIN $VERSION" --notes-file notes.md --verify-tag

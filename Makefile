@@ -6,7 +6,7 @@
 
 PLUGINS := contextforge azure kubernetes cloudflare digitalocean namecheap forge keeper onepassword
 
-.PHONY: all test lint dist clean
+.PHONY: all test lint dist release-bundle clean
 
 all: test dist
 
@@ -30,6 +30,14 @@ dist:
 		echo "==> dist $$p"; \
 		(cd $$p && $(MAKE) dist) || exit 1; \
 	done
+
+# release/<plugin>-<version>/ holds that plugin's release tarballs, one per
+# platform, and SHA256SUMS: what pushing the <plugin>/v<version> tag publishes.
+# Useful to check a release before tagging. It never touches dist/.
+#   make release-bundle PLUGIN=kubernetes VERSION=0.3.0
+release-bundle:
+	@test -n "$(PLUGIN)" -a -n "$(VERSION)" || { echo "usage: make release-bundle PLUGIN=<id> VERSION=X.Y.Z"; exit 2; }
+	scripts/release-bundle.sh $(PLUGIN) $(VERSION)
 
 clean:
 	rm -rf dist

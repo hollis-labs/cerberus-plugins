@@ -56,6 +56,44 @@ so there are no trust flags. Every operation that changes something requires
 plugin binary itself (`<binary> write-dist <dir>`), so the manifest the host
 installs cannot drift from the operations the plugin actually serves.
 
+### Install from a release
+
+Each plugin is released on its own schedule, under a `<plugin>/vX.Y.Z` tag. A
+release carries one tarball per platform (`darwin-arm64`, `darwin-amd64`,
+`linux-arm64`, `linux-amd64`) and a `SHA256SUMS` file. Every tarball extracts
+to `<plugin>/`, the same installable directory `make dist` writes.
+
+```bash
+plugin=kubernetes version=0.3.0 platform=darwin-arm64
+gh release download "$plugin/v$version" -R hollis-labs/cerberus-plugins \
+  -p "$plugin-$version-$platform.tar.gz" -p SHA256SUMS
+shasum -a 256 -c SHA256SUMS --ignore-missing
+tar -xzf "$plugin-$version-$platform.tar.gz"
+cerberus connectors plugin managed install "$PWD/$plugin"
+cerberus connectors plugin managed load "$plugin"
+```
+
+Install copies the bundle into `~/.cerberus/plugins/`, so you can delete the
+extracted directory afterwards. The binaries are not notarized. A tarball you
+download through a browser on macOS is quarantined, and Gatekeeper then refuses
+to run the plugin. Download with `gh` or `curl`, or run `xattr -dr
+com.apple.quarantine "$plugin"` before installing.
+
+### Cutting a release
+
+1. Set the plugin's `Version` constant (`internal/<pkg>/connector.go`) to the
+   new version and merge that. The constant is what the plugin stamps into
+   `plugin.yaml`, and the tag must agree with it.
+2. Optionally build the release locally first:
+   `make release-bundle PLUGIN=<plugin> VERSION=X.Y.Z` writes the tarballs and
+   `SHA256SUMS` under `release/`.
+3. Tag `main` and push the tag:
+   `git tag <plugin>/vX.Y.Z && git push origin <plugin>/vX.Y.Z`.
+
+`.github/workflows/release.yml` then runs `scripts/release-bundle.sh`, which
+runs the plugin's tests, refuses a tag that disagrees with the manifest's
+version, cross-compiles the four platforms and publishes the GitHub release.
+
 ### Install review declarations
 
 Beside the connector manifest, every plugin here declares what the install
