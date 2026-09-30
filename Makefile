@@ -4,7 +4,7 @@
 #
 # Adding a plugin means adding its directory name here and nothing else.
 
-PLUGINS := contextforge azure kubernetes cloudflare digitalocean namecheap forge keeper
+PLUGINS := contextforge azure kubernetes cloudflare digitalocean namecheap forge keeper onepassword
 
 .PHONY: all test lint dist clean
 
