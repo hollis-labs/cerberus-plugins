@@ -2,10 +2,15 @@
 
 Connector plugins for [Cerberus](https://github.com/hollis-labs/cerberus).
 
-> **Pre-release.** Every plugin here is at `0.1.x` and read-only: none
-> implements a write, lifecycle or destructive operation yet. They run in
-> active internal use, but there are no outside users, no compatibility
-> guarantees and no support channel. The plugin authoring contract
+> **Pre-release.** Every plugin here is below `1.0`, and each is versioned and
+> released on its own under a `<plugin>/vX.Y.Z` tag. The current versions are
+> on the [releases page](https://github.com/hollis-labs/cerberus-plugins/releases).
+> Some plugins are read-only (`contextforge`, `azure`, `github`). Some implement
+> writes, lifecycle or destructive operations behind `--ack` with dry-run
+> previews (`kubernetes`, `cloudflare`, `digitalocean`, `namecheap`, `forge`).
+> Two are secret backends (`keeper`, `onepassword`). The Plugins table below
+> says which is which. They run in active internal use, but there are no
+> outside users, no compatibility guarantees and no support channel. The plugin authoring contract
 > (`pkg/plugin`, `pkg/connector`) is itself pre-release and can change with
 > Cerberus. Built in the open: interfaces and behavior can change without
 > notice. Each plugin's README carries its own status.
