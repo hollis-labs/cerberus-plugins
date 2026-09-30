@@ -79,8 +79,7 @@ no-gaps test fails.
 
 ## Writing a plugin
 
-Cerberus is a private module, so `go env -w GOPRIVATE=github.com/hollis-labs/*`
-once and `go get` works for anyone with repository access. No `replace`
+Cerberus is a public module, so `go get` works with no extra setup. No `replace`
 directive is needed; add one only for convenience when developing beside a local
 Cerberus checkout.
 
