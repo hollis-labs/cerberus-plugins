@@ -17,7 +17,7 @@ connector gets, without rebuilding the host.
 
 Plugins live here when they are optional per user, carry a vendor SDK, or ship
 on someone else's schedule. The primitives the control plane is built on
-(`local`, `ssh`, `docker`, `github`) stay compiled into Cerberus itself. See
+(`local`, `ssh`, `docker`) stay compiled into Cerberus itself. See
 `docs/plans/connector-work-packages.md` in the Cerberus repo for the split.
 
 ## Layout
@@ -170,3 +170,4 @@ contract is missing a piece — raise it against Cerberus rather than reaching i
 | `forge` | server and site reads, plus deployment-script, deploy and site-command writes behind `--ack`, with plugin-served dry runs (the script update diffs against the current script) | Laravel Forge. Replaces the connector Cerberus compiled in, under the same id, so it installs only on a host without that built-in. See `forge/README.md`. |
 | `keeper` | a secret backend: an offline `status` read, and `keeper://` resolution the host requests outside every operation surface; never writes, binds or caches | Keeper Secrets Manager. Claims `keeper://`. See `keeper/README.md`. |
 | `onepassword` | a secret backend: an offline `status` read, and `op://` resolution through a service account that the host requests outside every operation surface; never writes or keeps a value | 1Password. Claims `op://`. See `onepassword/README.md`. |
+| `github` | read-only operations | Repository status, releases and Actions runs. Replaces the connector Cerberus compiled in, under the same id, so it installs only on a host without that built-in. See `github/README.md`. |
