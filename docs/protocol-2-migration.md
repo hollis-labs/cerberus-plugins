@@ -71,4 +71,3 @@ Running the same test against a protocol-1 build reproduces
 - The host-side `SessionID` fields on command/MCP requests are no longer
   `omitempty`; plugins using the SDK types are unaffected.
 - Do not hand-edit `plugin.yaml`; it is generated from `Definition()`.
-- restic's go.mod listed cerberus and plugin-sdk as `// indirect` with `replace` directives to sibling checkouts; drop both replaces and let `go get` + `go mod tidy` rewrite the requires. It has no tests, so `go vet` and a loaded-plugin proof are the only checks. `make build` leaves `plugin.yaml` byte-identical.
