@@ -71,5 +71,3 @@ Running the same test against a protocol-1 build reproduces
 - The host-side `SessionID` fields on command/MCP requests are no longer
   `omitempty`; plugins using the SDK types are unaffected.
 - Do not hand-edit `plugin.yaml`; it is generated from `Definition()`.
-
-- A plugin that dials a configured loopback endpoint (contextforge, 127.0.0.1:14444) makes a local connection attempt during `Health` and the proof operation. It is refused with no listener, but it is not strictly network-free. Azure likewise reports a missing `az` binary on the proof PATH rather than a missing credential.
