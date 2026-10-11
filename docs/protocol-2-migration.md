@@ -71,3 +71,51 @@ Running the same test against a protocol-1 build reproduces
 - The host-side `SessionID` fields on command/MCP requests are no longer
   `omitempty`; plugins using the SDK types are unaffected.
 - Do not hand-edit `plugin.yaml`; it is generated from `Definition()`.
+
+## Gotchas from migrating the whole set
+
+Collected from the 20 plugins migrated on 2026-10-11 (one reference, four
+already installed, sixteen more in parallel).
+
+- **A local `replace` hides the problem.** `apt`, `fail2ban`, `journalctl`,
+  `ufw`, `restic`, `rsync` and `tmux` listed cerberus and plugin-sdk as
+  `// indirect` with `replace` directives to sibling checkouts. Drop both
+  replaces first, then `go get` the pins and `go mod tidy`; otherwise `go get`
+  resolves against whatever the sibling checkout happens to be. `tidy` leaves
+  `github.com/kr/pretty` as an indirect requirement.
+- **`go get` raises the `go` directive** (1.26.6 to 1.26.8 for `forge`,
+  `vercel` and others) and moves an old cerberus pseudo-version. Expect both in
+  the diff.
+- **`make build` vs `make dist`.** `make build` writes `plugin.yaml` and `bin/`
+  in the plugin directory (the directory itself is the bundle) for plugins that
+  commit their manifest; `forge` and `vercel` need `make dist`, which writes to
+  the gitignored `dist/<id>`. For the load proof, copy `plugin.yaml` and the
+  binary into a clean directory before installing, because `make build` rewrites
+  `plugin.yaml` in place.
+- **Plugins with no tests** (`apt`, `fail2ban`, `journalctl`, `ufw`, `restic`,
+  `rsync`, `tmux`): `go vet` plus the load proof are the only checks.
+- **Plugins that shell out through `sudo`** (`fail2ban`, `journalctl`, `ufw`)
+  fail a proof read op with `sudo: A terminal is required to authenticate` when
+  there is no TTY or passwordless sudo. That is the plugin's own error, not a
+  protocol fault; `Load` and `Health` are the protocol evidence there.
+- **Required config is checked before the credential.** `github` `status` needs
+  `owner` and `repo`; pass them in `OperationArgs.Config` for the proof or the
+  call is refused for missing fields first.
+- **Several required secrets** (`namecheap`: `api_key`, `api_user`, `username`)
+  are all reported in `MissingSecrets`, and a read fails with the plugin's own
+  message plus the host's credential hint.
+- **Secret backends** (`onepassword`, `keeper`) need only the mechanical swap:
+  02ac61b changed no `pkg/secret` or `pkg/plugin` secret-backend types. Prove
+  them with `Manager.ResolveSecret(ctx, "<scheme>://...")` after `Load`; with no
+  credential it fails closed as `credential_missing`, and their `status` op
+  returns `configured:false`.
+- **Not strictly network-free.** `contextforge` dials its configured loopback
+  endpoint (`127.0.0.1:14444`) during `Health` and the proof operation; with no
+  listener it is refused. `azure` reports a missing `az` binary rather than a
+  missing credential, and `kubernetes` reports a missing kubeconfig context.
+- **`vercel`** is token-bearing: `Load` succeeds without one, `Health` is
+  unhealthy with guidance, and each operation fails per call naming
+  `CERBERUS_VERCEL_TOKEN`.
+- **Redaction can eat guidance.** In `onepassword`'s `credential_missing` text
+  the word "vaults" comes out as "[reference]s": the host's redaction rewrites
+  it. This is a Cerberus-side quirk, not a plugin bug.
