@@ -71,11 +71,3 @@ Running the same test against a protocol-1 build reproduces
 - The host-side `SessionID` fields on command/MCP requests are no longer
   `omitempty`; plugins using the SDK types are unaffected.
 - Do not hand-edit `plugin.yaml`; it is generated from `Definition()`.
-- Plugins that were built against a local `replace` (apt, fail2ban, journalctl,
-  ufw) carry `// indirect` requires and no tests; after the swap `go mod tidy`
-  adds `github.com/kr/pretty` as an indirect requirement. Drop the replaces
-  first, or `go get` resolves against the sibling checkout.
-- Plugins that shell out via `sudo` (fail2ban, journalctl, ufw) fail a proof
-  read op with `sudo: A terminal is required to authenticate` when run without a
-  TTY or passwordless sudo. That is the plugin's own error, not a protocol
-  fault; `Load` and `Health` are the real protocol evidence there.
