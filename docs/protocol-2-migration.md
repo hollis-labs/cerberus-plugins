@@ -64,3 +64,4 @@ Running the same test against a protocol-1 build reproduces
 - The host-side `SessionID` fields on command/MCP requests are no longer
   `omitempty`; plugins using the SDK types are unaffected.
 - Do not hand-edit `plugin.yaml`; it is generated from `Definition()`.
+- vercel (secret-bearing, token required): the proof loads without a token; `Load` succeeds, `Health` is unhealthy with the plugin's guidance, and each operation fails per call naming `CERBERUS_VERCEL_TOKEN`. Its go.mod was on go 1.26.6 and an older cerberus pseudo-version; `go get` moves both. `make dist` writes to the repo-level `dist/vercel` (gitignored), not the plugin dir.
