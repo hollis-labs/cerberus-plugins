@@ -60,6 +60,13 @@ Running the same test against a protocol-1 build reproduces
 
 ## Gotchas
 
+- When every declared secret is optional (tailscale), the proof differs: `Load`
+  succeeds, `Health` is healthy with a message saying API operations are
+  unavailable, and only the API operation fails per call with the plugin's
+  missing-credential error.
+- `make build` regenerates `plugin.yaml` in place; for the proof, copy
+  `plugin.yaml` and `bin/<plugin>` into a clean bundle directory and install that.
+
 - Run `go mod tidy` before `make dist` so `go.sum` has the new modules.
 - The host-side `SessionID` fields on command/MCP requests are no longer
   `omitempty`; plugins using the SDK types are unaffected.
