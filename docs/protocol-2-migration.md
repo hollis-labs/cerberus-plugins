@@ -64,3 +64,5 @@ Running the same test against a protocol-1 build reproduces
 - The host-side `SessionID` fields on command/MCP requests are no longer
   `omitempty`; plugins using the SDK types are unaffected.
 - Do not hand-edit `plugin.yaml`; it is generated from `Definition()`.
+
+- Secret backends (keeper, scheme claimant) need nothing beyond the mechanical swap: 02ac61b changed no `pkg/plugin` secret-backend types, only the SDK import path. Prove them with `Manager.ResolveSecret(ctx, "<scheme>://...")` after `Load`; with no credential it fails closed as `credential_missing`.
