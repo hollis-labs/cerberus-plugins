@@ -64,3 +64,4 @@ Running the same test against a protocol-1 build reproduces
 - The host-side `SessionID` fields on command/MCP requests are no longer
   `omitempty`; plugins using the SDK types are unaffected.
 - Do not hand-edit `plugin.yaml`; it is generated from `Definition()`.
+- A secret backend (`op://`): the host's secret-backend contract (`pkg/secret`, resolve command) was untouched by 02ac61b, so only the mechanical swap is needed. Prove it with `Manager.ResolveSecret(ctx, "op://v/i/f")`, which fails `credential_missing` without a network call or `op`. The `status` operation succeeds unconfigured (`configured:false`).
