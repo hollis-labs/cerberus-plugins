@@ -64,3 +64,4 @@ Running the same test against a protocol-1 build reproduces
 - The host-side `SessionID` fields on command/MCP requests are no longer
   `omitempty`; plugins using the SDK types are unaffected.
 - Do not hand-edit `plugin.yaml`; it is generated from `Definition()`.
+- Namecheap declares three required secrets; `Load` reports all of them in `MissingSecrets` (api_key, api_user, username), and a read op fails with the plugin's own message plus the host's credential hint.
