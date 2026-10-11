@@ -25,9 +25,9 @@ out=${3:-$root/release/$plugin-$version}
 
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "version $version is not X.Y.Z"
 
-# The plugin must be one the root Makefile builds; that list is the registry.
-plugins=$(sed -n 's/^PLUGINS[[:space:]]*:=[[:space:]]*//p' "$root/Makefile")
-[[ " $plugins " == *" $plugin "* ]] || die "$plugin is not in the Makefile's PLUGINS list"
+# A plugin is a top-level directory with a go.mod, the same rule the root
+# Makefile and CI use.
+[[ -f $root/$plugin/go.mod ]] || die "$plugin is not a plugin directory (no $plugin/go.mod)"
 
 dir=$root/$plugin
 binary=$(sed -n 's/^BINARY[[:space:]]*:=[[:space:]]*//p' "$dir/Makefile")
