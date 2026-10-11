@@ -71,4 +71,3 @@ Running the same test against a protocol-1 build reproduces
 - The host-side `SessionID` fields on command/MCP requests are no longer
   `omitempty`; plugins using the SDK types are unaffected.
 - Do not hand-edit `plugin.yaml`; it is generated from `Definition()`.
-- A read op that declares required config fields (github `status` needs `owner` and `repo`) is refused for missing fields before the credential check; pass them in `OperationArgs.Config` for the proof.
