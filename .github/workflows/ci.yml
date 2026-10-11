@@ -6,14 +6,30 @@ on:
   pull_request:
 
 jobs:
+  # The plugin list is not written down here. A plugin is a top-level directory
+  # with a go.mod, so adding one adds it to the matrix, the root Makefile and
+  # the load check at once.
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      plugins: ${{ steps.find.outputs.plugins }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        run: |
+          plugins=$(for f in */go.mod; do echo "${f%/go.mod}"; done | jq -R . | jq -sc .)
+          [ "$plugins" != "[]" ] || { echo "no plugin directories found"; exit 1; }
+          echo "plugins=$plugins" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: discover
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         # One job per plugin: each is its own module and they must not be able
         # to break each other's build.
-        plugin: [contextforge, azure, kubernetes, cloudflare, digitalocean, namecheap, forge, keeper, onepassword, github, vercel]
+        plugin: ${{ fromJSON(needs.discover.outputs.plugins) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -34,8 +50,22 @@ jobs:
         working-directory: ${{ matrix.plugin }}
         run: go test ./...
 
-      # Proves the manifest the host would install is valid, and that the
-      # entrypoint actually builds.
-      - name: Build installable dist
-        working-directory: ${{ matrix.plugin }}
-        run: make dist
+      # Builds the plugin with its own Makefile target, then installs and
+      # LOADS it into a real Cerberus host (the version the plugins pin), the
+      # way the daemon does. This is what catches host/plugin protocol skew:
+      # a plugin the host refuses fails here as `invalid_init`, where building
+      # and unit-testing it pass. It also proves the manifest is valid and the
+      # entrypoint builds. Needs no secrets; an unhealthy plugin (missing
+      # credential or tool) still passes, a plugin that does not load does not.
+      - name: Build and load into a Cerberus host
+        run: scripts/loadcheck.sh ${{ matrix.plugin }}
+
+  # One stable check to require in branch protection, since the matrix above
+  # changes with the plugin list.
+  ci-ok:
+    if: always()
+    needs: [discover, build]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          [ "${{ needs.discover.result }}" = success ] && [ "${{ needs.build.result }}" = success ] || { echo "CI failed: discover=${{ needs.discover.result }} build=${{ needs.build.result }}"; exit 1; }

@@ -37,8 +37,31 @@ azure/                 another, same shape
 dist/<plugin>/         built, installable plugin directory (gitignored)
 ```
 
-`make test` and `make dist` at the root iterate every plugin listed in
-`PLUGINS`. Adding a plugin means adding its directory name there.
+`make test` and `make dist` at the root iterate every plugin. A plugin is a
+top-level directory containing a `go.mod`; the root Makefile, the CI matrix and
+the load check all discover plugins that way, so adding one means adding its
+directory and nothing else.
+
+## Load check
+
+Building and unit-testing a plugin does not prove the Cerberus host will accept
+it: a plugin on a stale protocol builds and passes its tests, then the daemon
+refuses it with `invalid_init`. CI therefore builds every plugin with its own
+Makefile target and loads it into a real Cerberus host (the version the plugins
+pin), failing if any plugin does not load. A plugin that loads but reports
+unhealthy because a credential or tool is missing passes. Run the same check
+locally:
+
+```bash
+make loadcheck                    # every plugin
+make loadcheck PLUGIN=ufw         # one plugin
+make loadcheck CERBERUS_SRC=~/dev/hollis-labs/apps/cerberus   # against a local host checkout
+```
+
+It needs no secrets and runs only Install, Load and Health in a throwaway HOME.
+The host half is `ci/loadcheck/loadcheck_test.go`, which `scripts/loadcheck.sh`
+drops into a copy of the cerberus module (its `internal/pluginhost` cannot be
+imported from here).
 
 ## Build and install
 
