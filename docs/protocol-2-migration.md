@@ -71,4 +71,3 @@ Running the same test against a protocol-1 build reproduces
 - The host-side `SessionID` fields on command/MCP requests are no longer
   `omitempty`; plugins using the SDK types are unaffected.
 - Do not hand-edit `plugin.yaml`; it is generated from `Definition()`.
-- `go get` raised the `go` directive from 1.26.6 to 1.26.8; `make dist` (not `make build`, which is only `go build ./...`) is what writes the bundle under `../dist/<id>`.
