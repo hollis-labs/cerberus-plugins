@@ -54,7 +54,7 @@ type DryRunPreview struct {
 	Warnings  []string       `json:"warnings,omitempty"`
 }
 
-func newPreview(operation, summary string, target, input map[string]any) DryRunPreview {
+func newPreview(operation, summary string, target, input map[string]any, warnings ...string) DryRunPreview {
 	return DryRunPreview{
 		DryRun:    true,
 		Connector: ConnectorID,
@@ -62,5 +62,97 @@ func newPreview(operation, summary string, target, input map[string]any) DryRunP
 		Summary:   summary,
 		Target:    target,
 		Input:     input,
+		Warnings:  warnings,
 	}
+}
+
+// TokenStatus is verify_token's result. Policies is what the token holds, by
+// permission group name; it is only present when Cloudflare let the token read
+// itself (PoliciesAvailable), which needs an API Tokens read permission that a
+// least-privilege token usually does not have. Group ids and request
+// conditions on the token are not returned.
+type TokenStatus struct {
+	ID                string        `json:"id"`
+	Status            string        `json:"status"`
+	Scope             string        `json:"scope"` // user or account
+	ExpiresOn         string        `json:"expires_on,omitempty"`
+	NotBefore         string        `json:"not_before,omitempty"`
+	PoliciesAvailable bool          `json:"policies_available"`
+	Policies          []TokenPolicy `json:"policies"`
+	Note              string        `json:"note,omitempty"`
+}
+
+// TokenPolicy is one policy on a token: an effect, the permission groups it
+// grants and the resources they apply to.
+type TokenPolicy struct {
+	Effect           string   `json:"effect"`
+	PermissionGroups []string `json:"permission_groups"`
+	Resources        []string `json:"resources"`
+}
+
+// Bucket is an R2 bucket. Names are chosen by whoever created the bucket, so
+// the name is labelled untrusted.
+type Bucket struct {
+	Name         string `json:"name" cerb:"untrusted"`
+	CreatedAt    string `json:"created_at,omitempty"`
+	Location     string `json:"location,omitempty"`
+	StorageClass string `json:"storage_class,omitempty"`
+	Jurisdiction string `json:"jurisdiction,omitempty"`
+}
+
+// BucketDeleted reports a completed delete_r2_bucket.
+type BucketDeleted struct {
+	Deleted      bool   `json:"deleted"`
+	AccountID    string `json:"account_id"`
+	Name         string `json:"name"`
+	Jurisdiction string `json:"jurisdiction,omitempty"`
+}
+
+// R2Credential is create_r2_credential's result: an S3-compatible key pair for
+// one bucket. The secret half is returned this once. Cloudflare derives it from
+// the API token it creates and shows that token only in the creation response,
+// so it cannot be read again; this plugin does not store it, log it or return
+// the API token it came from.
+//
+// The secret half is named so the host's redactor, which rewrites any field
+// whose name says secret, token or password, leaves it alone: it is the one
+// value this operation exists to hand over.
+type R2Credential struct {
+	AccessKeyID    string `json:"access_key_id"`
+	AccessKeyValue string `json:"access_key_value"`
+	Bucket         string `json:"bucket"`
+	Permission     string `json:"permission"`
+	Endpoint       string `json:"endpoint"`
+	Note           string `json:"note"`
+}
+
+// CredentialRequest is what create_r2_credential sends. It is ours, not the
+// wire body.
+type CredentialRequest struct {
+	Bucket       string
+	Jurisdiction string
+	Permission   string // read_write or read
+}
+
+// CredentialInfo is what revoke_r2_credential reads before it revokes: enough
+// to tell a key this plugin minted from any other token.
+type CredentialInfo struct {
+	AccessKeyID string `json:"access_key_id"`
+	Name        string `json:"name" cerb:"untrusted"`
+	Status      string `json:"status"`
+}
+
+// CredentialRevoked reports a completed revoke_r2_credential.
+type CredentialRevoked struct {
+	Revoked     bool   `json:"revoked"`
+	AccountID   string `json:"account_id"`
+	AccessKeyID string `json:"access_key_id"`
+}
+
+// UpsertResult reports a completed upsert_a_record: what was done, the record
+// as it now stands and, for an update, as it stood.
+type UpsertResult struct {
+	Action   string     `json:"action"` // created, updated or unchanged
+	Record   DNSRecord  `json:"record"`
+	Previous *DNSRecord `json:"previous,omitempty"`
 }

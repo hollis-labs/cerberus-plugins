@@ -20,6 +20,11 @@ type call struct {
 type fakeBackend struct {
 	zones   []Zone
 	records []DNSRecord
+	token   *TokenStatus
+	buckets []Bucket
+	creds   map[string]CredentialInfo
+	zone    Zone
+	aRecs   []DNSRecord
 	err     error
 	calls   []call
 }
@@ -57,6 +62,89 @@ func (f *fakeBackend) CreateDNSRecord(_ context.Context, zoneID string, rec DNSR
 
 func (f *fakeBackend) DeleteDNSRecord(_ context.Context, zoneID, recordID string) error {
 	f.record("DeleteDNSRecord", zoneID, recordID)
+	return f.err
+}
+
+func (f *fakeBackend) VerifyToken(_ context.Context, accountID string) (*TokenStatus, error) {
+	f.record("VerifyToken", accountID)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.token != nil {
+		return f.token, nil
+	}
+	return &TokenStatus{ID: "tok", Status: "active", Scope: "user", Policies: []TokenPolicy{}}, nil
+}
+
+func (f *fakeBackend) ListBuckets(_ context.Context, accountID, jurisdiction string) ([]Bucket, error) {
+	f.record("ListBuckets", accountID, jurisdiction)
+	return f.buckets, f.err
+}
+
+func (f *fakeBackend) CreateBucket(_ context.Context, accountID string, req BucketRequest) (*Bucket, error) {
+	f.record("CreateBucket", accountID, req)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &Bucket{Name: req.Name, Jurisdiction: req.Jurisdiction}, nil
+}
+
+func (f *fakeBackend) DeleteBucket(_ context.Context, accountID, name, jurisdiction string) error {
+	f.record("DeleteBucket", accountID, name, jurisdiction)
+	return f.err
+}
+
+func (f *fakeBackend) GetZone(_ context.Context, zoneID string) (*Zone, error) {
+	f.record("GetZone", zoneID)
+	if f.err != nil {
+		return nil, f.err
+	}
+	z := f.zone
+	if z.Name == "" {
+		z.Name = "example.com"
+	}
+	z.ID = zoneID
+	return &z, nil
+}
+
+func (f *fakeBackend) FindARecords(_ context.Context, zoneID, fqdn string) ([]DNSRecord, error) {
+	f.record("FindARecords", zoneID, fqdn)
+	return f.aRecs, f.err
+}
+
+func (f *fakeBackend) UpdateDNSRecord(_ context.Context, zoneID, recordID string, rec DNSRecord) (*DNSRecord, error) {
+	f.record("UpdateDNSRecord", zoneID, recordID, rec)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &rec, nil
+}
+
+// mintedValue is the placeholder secret half the fake mints.
+const mintedValue = "0123456789abcdef-placeholder-secret-half"
+
+func (f *fakeBackend) CreateR2Credential(_ context.Context, accountID string, req CredentialRequest) (*R2Credential, error) {
+	f.record("CreateR2Credential", accountID, req)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &R2Credential{AccessKeyID: "key1", AccessKeyValue: mintedValue, Bucket: req.Bucket, Permission: req.Permission, Endpoint: r2Endpoint(accountID, req.Jurisdiction)}, nil
+}
+
+func (f *fakeBackend) GetR2Credential(_ context.Context, accountID, accessKeyID string) (*CredentialInfo, error) {
+	f.record("GetR2Credential", accountID, accessKeyID)
+	if f.err != nil {
+		return nil, f.err
+	}
+	info, ok := f.creds[accessKeyID]
+	if !ok {
+		return nil, &apiError{Status: 404, Message: "token not found"}
+	}
+	return &info, nil
+}
+
+func (f *fakeBackend) RevokeR2Credential(_ context.Context, accountID, accessKeyID string) error {
+	f.record("RevokeR2Credential", accountID, accessKeyID)
 	return f.err
 }
 
@@ -112,6 +200,18 @@ func decode[T any](t *testing.T, result subprocess.MCPCallResult) T {
 // test can iterate the manifest without knowing each schema.
 func validArgs(operation string) map[string]any {
 	switch operation {
+	case "verify_token":
+		return map[string]any{}
+	case "list_r2_buckets":
+		return map[string]any{"account_id": "acct"}
+	case "upsert_a_record":
+		return map[string]any{"zone_id": "zone", "name": "app", "content": "100.64.0.10", argAcknowledged: true}
+	case "create_r2_credential":
+		return map[string]any{"account_id": "acct", "bucket": "example-backups", argAcknowledged: true}
+	case "revoke_r2_credential":
+		return map[string]any{"account_id": "acct", "access_key_id": "key1", argAcknowledged: true}
+	case "create_r2_bucket", "delete_r2_bucket":
+		return map[string]any{"account_id": "acct", "name": "example-backups", argAcknowledged: true}
 	case "create_zone":
 		return map[string]any{"account_id": "acct", "name": "example.com", argAcknowledged: true}
 	case "list_dns_records":
@@ -136,22 +236,34 @@ func TestEveryDeclaredOperationIsServed(t *testing.T) {
 	}
 }
 
-// The operation set must match the compiled-in connector's, so a caller sees
-// the same contract either side of the move. ListTunnels was implemented there
-// but never declared; it stays undeclared here.
+// The operation set is the compiled-in connector's five plus what this plugin
+// has added since. ListTunnels was implemented in the built-in but never
+// declared; it stays undeclared here.
 func TestOperationSetMatchesTheBuiltIn(t *testing.T) {
 	var got []string
 	for _, op := range Definition().Operations {
 		got = append(got, op.Name)
 	}
-	want := []string{"list_zones", "create_zone", "list_dns_records", "create_dns_record", "delete_dns_record"}
+	want := []string{"verify_token", "list_zones", "create_zone", "list_dns_records", "create_dns_record", "delete_dns_record",
+		"list_r2_buckets", "create_r2_bucket", "delete_r2_bucket", "create_r2_credential", "revoke_r2_credential", "upsert_a_record"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("operations = %v, want %v", got, want)
 	}
 }
 
-// A write is ack-gated and previews; a read is neither. Only delete_dns_record
-// is destructive by effect, the creates are writes.
+// A write is ack-gated and previews; a read is neither. The deletes are
+// destructive by effect, the creates are writes.
+// destructiveOperations is every operation that removes something or mints a
+// credential, and so is Destructive by effect rather than a plain write.
+var destructiveOperations = map[string]bool{
+	"delete_dns_record": true,
+	"delete_r2_bucket":  true,
+	// Both are credential operations, so destructive rather than plain writes.
+	"create_r2_credential": true,
+	"revoke_r2_credential": true,
+	"upsert_a_record":      true,
+}
+
 func TestWriteOperationsAreExactlyTheAckGatedOnes(t *testing.T) {
 	for _, op := range Definition().Operations {
 		write := writeOperations[op.Name]
@@ -159,8 +271,8 @@ func TestWriteOperationsAreExactlyTheAckGatedOnes(t *testing.T) {
 			t.Errorf("%s: effect=%s requires_ack=%v supports_dry=%v, but writeOperations says write=%v",
 				op.Name, op.Effect, op.RequiresAck, op.SupportsDry, write)
 		}
-		if op.Destructive != (op.Name == "delete_dns_record") {
-			t.Errorf("%s: Destructive=%v; only delete_dns_record is destructive", op.Name, op.Destructive)
+		if op.Destructive != destructiveOperations[op.Name] {
+			t.Errorf("%s: Destructive=%v, want %v", op.Name, op.Destructive, destructiveOperations[op.Name])
 		}
 	}
 }
@@ -455,5 +567,460 @@ func TestHealthReportsAConfiguredToken(t *testing.T) {
 	status, err := loadedPlugin(t, &fakeBackend{}).Health(context.Background())
 	if err != nil || !status.OK {
 		t.Fatalf("Health = %+v, %v", status, err)
+	}
+}
+
+func TestVerifyTokenIsAReadAndPassesTheAccount(t *testing.T) {
+	backend := &fakeBackend{token: &TokenStatus{ID: "tok", Status: "active", Scope: "account", Policies: []TokenPolicy{}}}
+	got := decode[TokenStatus](t, mustCall(t, loadedPlugin(t, backend), "verify_token", map[string]any{"account_id": "acct1"}))
+	if got.Status != "active" || backend.calls[0].args[0] != "acct1" {
+		t.Fatalf("got %+v, calls %+v", got, backend.calls)
+	}
+	if _, _, refused := failure(callTool(loadedPlugin(t, backend), "verify_token", map[string]any{"account_id": "../x"})); !refused {
+		t.Fatal("an account id that is not an id must be refused")
+	}
+}
+
+func TestListR2BucketsReturnsDTOs(t *testing.T) {
+	backend := &fakeBackend{buckets: []Bucket{{Name: "example-backups", Location: "WEUR"}}}
+	got := decode[[]Bucket](t, mustCall(t, loadedPlugin(t, backend), "list_r2_buckets", map[string]any{"account_id": "acct", "jurisdiction": "eu"}))
+	if len(got) != 1 || got[0].Name != "example-backups" {
+		t.Fatalf("buckets = %+v", got)
+	}
+	if !reflect.DeepEqual(backend.calls[0].args, []any{"acct", "eu"}) {
+		t.Fatalf("args = %v", backend.calls[0].args)
+	}
+}
+
+func TestBucketArgumentsAreValidated(t *testing.T) {
+	p := loadedPlugin(t, &fakeBackend{})
+	for name, args := range map[string]map[string]any{
+		"upper case":    {"account_id": "acct", "name": "Example", argAcknowledged: true},
+		"too short":     {"account_id": "acct", "name": "ab", argAcknowledged: true},
+		"edge hyphen":   {"account_id": "acct", "name": "-example", argAcknowledged: true},
+		"path":          {"account_id": "acct", "name": "a/../b", argAcknowledged: true},
+		"bad account":   {"account_id": "../x", "name": "example", argAcknowledged: true},
+		"bad hint":      {"account_id": "acct", "name": "example", "location_hint": "moon", argAcknowledged: true},
+		"bad class":     {"account_id": "acct", "name": "example", "storage_class": "Glacier", argAcknowledged: true},
+		"bad jurisdict": {"account_id": "acct", "name": "example", "jurisdiction": "mars", argAcknowledged: true},
+	} {
+		for _, op := range []string{"create_r2_bucket", "delete_r2_bucket"} {
+			if op == "delete_r2_bucket" && (name == "bad hint" || name == "bad class") {
+				continue
+			}
+			code, _, refused := failure(callTool(p, op, args))
+			if !refused || code != cerbplugin.ErrorInvalidArgs {
+				t.Errorf("%s with %s: refused=%v code=%q", op, name, refused, code)
+			}
+		}
+	}
+}
+
+func TestCreateAndDeleteBucketReachTheBackend(t *testing.T) {
+	backend := &fakeBackend{}
+	p := loadedPlugin(t, backend)
+	created := decode[Bucket](t, mustCall(t, p, "create_r2_bucket", map[string]any{
+		"account_id": "acct", "name": "example-backups", "storage_class": "Standard", "location_hint": "weur", argAcknowledged: true}))
+	if created.Name != "example-backups" {
+		t.Fatalf("created = %+v", created)
+	}
+	want := BucketRequest{Name: "example-backups", LocationHint: "weur", StorageClass: "Standard"}
+	if !reflect.DeepEqual(backend.calls[0].args, []any{"acct", want}) {
+		t.Fatalf("CreateBucket args = %v", backend.calls[0].args)
+	}
+	deleted := decode[BucketDeleted](t, mustCall(t, p, "delete_r2_bucket", validArgs("delete_r2_bucket")))
+	if !deleted.Deleted || deleted.Name != "example-backups" {
+		t.Fatalf("deleted = %+v", deleted)
+	}
+}
+
+// Cloudflare refuses a non-empty bucket; the plugin must surface that refusal
+// and never try to empty the bucket itself.
+func TestDeleteOfANonEmptyBucketIsTheAPIRefusalAndNothingElse(t *testing.T) {
+	backend := &fakeBackend{err: errors.New("delete r2 bucket example-backups: Cloudflare API answered 409 Conflict: The bucket you tried to delete is not empty")}
+	_, message, refused := failure(callTool(loadedPlugin(t, backend), "delete_r2_bucket", validArgs("delete_r2_bucket")))
+	if !refused || !strings.Contains(message, "not empty") {
+		t.Fatalf("refused=%v message=%q", refused, message)
+	}
+	if len(backend.calls) != 1 || backend.calls[0].method != "DeleteBucket" {
+		t.Fatalf("calls = %+v; only the one delete is allowed", backend.calls)
+	}
+}
+
+func TestBucketPreviewsReadTheAccountButChangeNothing(t *testing.T) {
+	backend := &fakeBackend{buckets: []Bucket{{Name: "example-backups", Location: "WEUR"}}}
+	p := loadedPlugin(t, backend)
+
+	del := decode[DryRunPreview](t, mustCall(t, p, "delete_r2_bucket", map[string]any{"account_id": "acct", "name": "example-backups", argDryRun: true}))
+	if !del.DryRun || del.Input["bucket"] == nil || !strings.Contains(strings.Join(del.Warnings, " "), "refuses to delete a bucket that still holds objects") {
+		t.Fatalf("delete preview = %+v", del)
+	}
+	create := decode[DryRunPreview](t, mustCall(t, p, "create_r2_bucket", map[string]any{"account_id": "acct", "name": "example-backups", argDryRun: true}))
+	if !strings.Contains(strings.Join(create.Warnings, " "), "already exists") || !strings.Contains(strings.Join(create.Warnings, " "), "billed") {
+		t.Fatalf("create preview = %+v", create)
+	}
+	for _, c := range backend.calls {
+		if c.method != "ListBuckets" {
+			t.Errorf("a preview called %s", c.method)
+		}
+	}
+
+	// Without a token the preview is the request alone, and says so.
+	bare := New()
+	if _, err := bare.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	noCred := decode[DryRunPreview](t, mustCall(t, bare, "delete_r2_bucket", map[string]any{"account_id": "acct", "name": "example-backups", argDryRun: true}))
+	if !strings.Contains(strings.Join(noCred.Warnings, " "), "not checked") {
+		t.Fatalf("credential-free preview = %+v", noCred)
+	}
+}
+
+func existingBackend() *fakeBackend {
+	return &fakeBackend{
+		buckets: []Bucket{{Name: "example-backups"}},
+		creds: map[string]CredentialInfo{
+			"key1":  {AccessKeyID: "key1", Name: credentialNamePrefix + "example-backups:read_write:1790000000", Status: "active"},
+			"admin": {AccessKeyID: "admin", Name: "r2 admin token", Status: "active"},
+		},
+	}
+}
+
+func TestMintDefaultsToReadWriteOnOneBucketAndReturnsTheSecretOnce(t *testing.T) {
+	backend := existingBackend()
+	got := decode[R2Credential](t, mustCall(t, loadedPlugin(t, backend), "create_r2_credential", validArgs("create_r2_credential")))
+	if got.AccessKeyID != "key1" || got.AccessKeyValue != mintedValue || got.Bucket != "example-backups" || got.Permission != PermissionReadWrite {
+		t.Fatalf("credential = %+v", got)
+	}
+	if got.Endpoint != "https://acct.r2.cloudflarestorage.com" || !strings.Contains(got.Note, "this once") {
+		t.Fatalf("credential = %+v", got)
+	}
+	var minted CredentialRequest
+	for _, c := range backend.calls {
+		if c.method == "CreateR2Credential" {
+			minted = c.args[1].(CredentialRequest)
+		}
+	}
+	if minted.Bucket != "example-backups" || minted.Permission != PermissionReadWrite {
+		t.Fatalf("minted request = %+v", minted)
+	}
+}
+
+func TestMintRefusesABucketThatDoesNotExistAndMintsNothing(t *testing.T) {
+	backend := existingBackend()
+	args := validArgs("create_r2_credential")
+	args["bucket"] = "typo-bucket"
+	code, message, refused := failure(callTool(loadedPlugin(t, backend), "create_r2_credential", args))
+	if !refused || code != cerbplugin.ErrorInvalidArgs || !strings.Contains(message, "no credential was minted") {
+		t.Fatalf("refused=%v code=%q message=%q", refused, code, message)
+	}
+	for _, c := range backend.calls {
+		if c.method == "CreateR2Credential" {
+			t.Fatal("a credential was minted for a bucket that does not exist")
+		}
+	}
+}
+
+func TestMintRefusesBadArguments(t *testing.T) {
+	p := loadedPlugin(t, existingBackend())
+	for name, change := range map[string]map[string]any{
+		"no bucket":      {"bucket": ""},
+		"bad bucket":     {"bucket": "../other"},
+		"bad permission": {"permission": "admin"},
+		"bad account":    {"account_id": "a/b"},
+	} {
+		args := validArgs("create_r2_credential")
+		for k, v := range change {
+			args[k] = v
+		}
+		if code, _, refused := failure(callTool(p, "create_r2_credential", args)); !refused || code != cerbplugin.ErrorInvalidArgs {
+			t.Errorf("%s: refused=%v code=%q", name, refused, code)
+		}
+	}
+}
+
+// The preview is the whole story of what a mint would do, and it creates
+// nothing: no credential, and so no secret anywhere in it.
+func TestMintPreviewDescribesTheScopeAndMintsNothing(t *testing.T) {
+	backend := existingBackend()
+	p := loadedPlugin(t, backend)
+	result := mustCall(t, p, "create_r2_credential", map[string]any{"account_id": "acct", "bucket": "example-backups", "permission": "read", argDryRun: true})
+	preview := decode[DryRunPreview](t, result)
+	words := strings.Join(preview.Warnings, " ")
+	if !preview.DryRun || preview.Input["permission_group"] != "Workers R2 Storage Bucket Item Read" ||
+		!strings.Contains(words, "mints a credential") || !strings.Contains(words, "only this bucket") || !strings.Contains(words, "once") {
+		t.Fatalf("preview = %+v", preview)
+	}
+	for _, c := range backend.calls {
+		if c.method == "CreateR2Credential" {
+			t.Fatal("a preview minted a credential")
+		}
+	}
+	missing := decode[DryRunPreview](t, mustCall(t, p, "create_r2_credential", map[string]any{"account_id": "acct", "bucket": "nope-bucket", argDryRun: true}))
+	if !strings.Contains(strings.Join(missing.Warnings, " "), "no bucket with this name") {
+		t.Fatalf("preview = %+v", missing)
+	}
+}
+
+// The secret half is registered the moment it is minted, so text a later
+// failure composes cannot carry it out; and it appears in the mint result and
+// nowhere else, telemetry included.
+func TestMintedSecretIsScrubbedFromLaterErrorsAndOtherOutput(t *testing.T) {
+	backend := existingBackend()
+	p := loadedPlugin(t, backend)
+	if strings.Contains(p.scrubber().text(mintedValue), "[REDACTED]") {
+		t.Fatal("the secret is scrubbed before it is minted")
+	}
+	minted := mustCall(t, p, "create_r2_credential", validArgs("create_r2_credential"))
+	_, events := cerbplugin.SplitTelemetry(minted.Content)
+	eventJSON, _ := json.Marshal(events)
+	if strings.Contains(string(eventJSON), mintedValue) || len(events) == 0 {
+		t.Errorf("telemetry = %s", eventJSON)
+	}
+	for _, hazard := range redactionHazards[3:] {
+		if m := hazard.pattern.FindString(string(minted.Content)); m != "" {
+			t.Errorf("mint result contains a %s-shaped construct %q the host redactor rewrites", hazard.name, m)
+		}
+	}
+	for _, r := range []subprocess.MCPCallResult{
+		mustCall(t, p, "list_r2_buckets", map[string]any{"account_id": "acct"}),
+		mustCall(t, p, "revoke_r2_credential", map[string]any{"account_id": "acct", "access_key_id": "key1", argDryRun: true}),
+		mustCall(t, p, "create_r2_credential", map[string]any{"account_id": "acct", "bucket": "example-backups", argDryRun: true}),
+	} {
+		if strings.Contains(string(r.Content), mintedValue) {
+			t.Errorf("the secret leaked into %s", r.Content)
+		}
+	}
+
+	backend.err = errors.New("upstream echoed " + mintedValue + " back")
+	_, message, refused := failure(callTool(p, "list_r2_buckets", map[string]any{"account_id": "acct"}))
+	if !refused || strings.Contains(message, mintedValue) {
+		t.Errorf("a later error carries the secret: %s", message)
+	}
+}
+
+func TestRevokeActsOnlyOnKeysThisPluginMinted(t *testing.T) {
+	backend := existingBackend()
+	p := loadedPlugin(t, backend)
+
+	code, message, refused := failure(callTool(p, "revoke_r2_credential", map[string]any{"account_id": "acct", "access_key_id": "admin", argAcknowledged: true}))
+	if !refused || code != cerbplugin.ErrorInvalidArgs || !strings.Contains(message, "not minted by create_r2_credential") {
+		t.Fatalf("refused=%v code=%q message=%q", refused, code, message)
+	}
+	for _, c := range backend.calls {
+		if c.method == "RevokeR2Credential" {
+			t.Fatal("revoked a token this plugin did not mint")
+		}
+	}
+
+	got := decode[CredentialRevoked](t, mustCall(t, p, "revoke_r2_credential", validArgs("revoke_r2_credential")))
+	if !got.Revoked || got.AccessKeyID != "key1" {
+		t.Fatalf("revoked = %+v", got)
+	}
+	last := backend.calls[len(backend.calls)-1]
+	if last.method != "RevokeR2Credential" || last.args[1] != "key1" {
+		t.Fatalf("last call = %+v", last)
+	}
+}
+
+func TestRevokePreviewReadsTheKeyAndFlagsAForeignToken(t *testing.T) {
+	backend := existingBackend()
+	p := loadedPlugin(t, backend)
+	own := decode[DryRunPreview](t, mustCall(t, p, "revoke_r2_credential", map[string]any{"account_id": "acct", "access_key_id": "key1", argDryRun: true}))
+	if own.Input["key"] == nil || strings.Contains(strings.Join(own.Warnings, " "), "REFUSED") {
+		t.Fatalf("preview = %+v", own)
+	}
+	foreign := decode[DryRunPreview](t, mustCall(t, p, "revoke_r2_credential", map[string]any{"account_id": "acct", "access_key_id": "admin", argDryRun: true}))
+	if !strings.Contains(strings.Join(foreign.Warnings, " "), "REFUSED") {
+		t.Fatalf("preview = %+v", foreign)
+	}
+	for _, c := range backend.calls {
+		if c.method == "RevokeR2Credential" {
+			t.Fatal("a preview revoked a key")
+		}
+	}
+}
+
+func methods(b *fakeBackend) []string {
+	var out []string
+	for _, c := range b.calls {
+		out = append(out, c.method)
+	}
+	return out
+}
+
+func TestUpsertCreatesAnUnproxiedRecordWhenNoneExists(t *testing.T) {
+	backend := &fakeBackend{}
+	got := decode[UpsertResult](t, mustCall(t, loadedPlugin(t, backend), "upsert_a_record", validArgs("upsert_a_record")))
+	if got.Action != "created" || got.Record.Name != "app.example.com" || got.Record.Content != "100.64.0.10" || got.Record.Proxied || got.Record.TTL != 1 {
+		t.Fatalf("result = %+v", got)
+	}
+	if !reflect.DeepEqual(methods(backend), []string{"GetZone", "FindARecords", "CreateDNSRecord"}) {
+		t.Fatalf("calls = %v", methods(backend))
+	}
+}
+
+func TestUpsertUpdatesInPlaceKeepsTheTTLAndTurnsTheProxyOff(t *testing.T) {
+	backend := &fakeBackend{aRecs: []DNSRecord{{ID: "r1", Type: "A", Name: "app.example.com", Content: "100.64.0.9", TTL: 300, Proxied: true}}}
+	got := decode[UpsertResult](t, mustCall(t, loadedPlugin(t, backend), "upsert_a_record", validArgs("upsert_a_record")))
+	if got.Action != "updated" || got.Previous == nil || got.Previous.Content != "100.64.0.9" || got.Record.Content != "100.64.0.10" ||
+		got.Record.TTL != 300 || got.Record.Proxied {
+		t.Fatalf("result = %+v", got)
+	}
+	last := backend.calls[len(backend.calls)-1]
+	if last.method != "UpdateDNSRecord" || last.args[1] != "r1" {
+		t.Fatalf("last call = %+v", last)
+	}
+}
+
+func TestUpsertOfAMatchingRecordChangesNothing(t *testing.T) {
+	backend := &fakeBackend{aRecs: []DNSRecord{{ID: "r1", Type: "A", Name: "app.example.com", Content: "100.64.0.10", TTL: 1}}}
+	got := decode[UpsertResult](t, mustCall(t, loadedPlugin(t, backend), "upsert_a_record", validArgs("upsert_a_record")))
+	if got.Action != "unchanged" {
+		t.Fatalf("result = %+v", got)
+	}
+	for _, m := range methods(backend) {
+		if m == "UpdateDNSRecord" || m == "CreateDNSRecord" {
+			t.Fatalf("a no-op wrote: %v", methods(backend))
+		}
+	}
+}
+
+func TestUpsertRefusesAmbiguousRecords(t *testing.T) {
+	backend := &fakeBackend{aRecs: []DNSRecord{{ID: "r1"}, {ID: "r2"}}}
+	code, message, refused := failure(callTool(loadedPlugin(t, backend), "upsert_a_record", validArgs("upsert_a_record")))
+	if !refused || code != cerbplugin.ErrorInvalidArgs || !strings.Contains(message, "will not choose") {
+		t.Fatalf("refused=%v code=%q message=%q", refused, code, message)
+	}
+}
+
+// A host record must never point at a public address. Every refusal happens
+// before any call to Cloudflare, so there is nothing to undo.
+func TestUpsertRefusesAnythingButATailscaleAddress(t *testing.T) {
+	for _, content := range []string{
+		"203.0.113.10",   // public
+		"100.63.255.255", // just below the range
+		"100.128.0.0",    // just above it
+		"10.0.0.1",       // private, not tailnet
+		"127.0.0.1",
+		"0.0.0.0",
+		"fd7a:115c:a1e0::1",  // tailnet IPv6; an A record cannot hold it
+		"::ffff:100.64.0.10", // v4-mapped v6
+		"100.64.0.10/32",     // not an address
+		"app.example.com",    // a name
+		"100.64.0.256",
+		"1e2.64.0.10",
+		"",
+	} {
+		backend := &fakeBackend{}
+		args := validArgs("upsert_a_record")
+		args["content"] = content
+		code, _, refused := failure(callTool(loadedPlugin(t, backend), "upsert_a_record", args))
+		if !refused || code != cerbplugin.ErrorInvalidArgs {
+			t.Errorf("content %q: refused=%v code=%q", content, refused, code)
+		}
+		if len(backend.calls) != 0 {
+			t.Errorf("content %q reached Cloudflare: %v", content, methods(backend))
+		}
+	}
+	// The edges of the range are inside it.
+	for _, content := range []string{"100.64.0.0", "100.127.255.255"} {
+		args := validArgs("upsert_a_record")
+		args["content"] = content
+		if _, _, refused := failure(callTool(loadedPlugin(t, &fakeBackend{}), "upsert_a_record", args)); refused {
+			t.Errorf("%s is a Tailscale address and was refused", content)
+		}
+	}
+}
+
+func TestUpsertCanNeverBeProxied(t *testing.T) {
+	for _, v := range []any{true, "true", "yes", "1"} {
+		backend := &fakeBackend{}
+		args := validArgs("upsert_a_record")
+		args["proxied"] = v
+		code, message, refused := failure(callTool(loadedPlugin(t, backend), "upsert_a_record", args))
+		if !refused || code != cerbplugin.ErrorInvalidArgs || !strings.Contains(message, "DNS-only") || len(backend.calls) != 0 {
+			t.Errorf("proxied=%v: refused=%v code=%q calls=%v", v, refused, code, methods(backend))
+		}
+	}
+}
+
+func TestUpsertRefusesBadNamesAndTTLs(t *testing.T) {
+	p := loadedPlugin(t, &fakeBackend{})
+	for name, change := range map[string]map[string]any{
+		"wildcard":   {"name": "*.app"},
+		"slash":      {"name": "a/b"},
+		"space":      {"name": "a b"},
+		"low ttl":    {"ttl": 5},
+		"high ttl":   {"ttl": 100000},
+		"bad zone":   {"zone_id": "../z"},
+		"no content": {"content": ""},
+	} {
+		args := validArgs("upsert_a_record")
+		for k, v := range change {
+			args[k] = v
+		}
+		if code, _, refused := failure(callTool(p, "upsert_a_record", args)); !refused || code != cerbplugin.ErrorInvalidArgs {
+			t.Errorf("%s: refused=%v code=%q", name, refused, code)
+		}
+	}
+}
+
+func TestUpsertQualifiesNames(t *testing.T) {
+	for in, want := range map[string]string{
+		"app":              "app.example.com",
+		"App":              "app.example.com",
+		"app.example.com":  "app.example.com",
+		"app.example.com.": "app.example.com",
+		"@":                "example.com",
+		"example.com":      "example.com",
+		"a.b":              "a.b.example.com",
+	} {
+		if got := qualifiedName(in, "example.com"); got != want {
+			t.Errorf("qualifiedName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestUpsertPreviewShowsBeforeAndAfterAndWritesNothing(t *testing.T) {
+	backend := &fakeBackend{aRecs: []DNSRecord{{ID: "r1", Type: "A", Name: "app.example.com", Content: "100.64.0.9", TTL: 300, Proxied: true}}}
+	args := validArgs("upsert_a_record")
+	delete(args, argAcknowledged)
+	args[argDryRun] = true
+	preview := decode[struct {
+		DryRunPreview
+		Input struct {
+			Action string    `json:"action"`
+			Before DNSRecord `json:"before"`
+			After  DNSRecord `json:"after"`
+		} `json:"input"`
+	}](t, mustCall(t, loadedPlugin(t, backend), "upsert_a_record", args))
+	if !preview.DryRun || preview.Input.Action != "updated" || preview.Input.Before.Content != "100.64.0.9" ||
+		preview.Input.After.Content != "100.64.0.10" || preview.Input.After.Proxied || preview.Input.After.TTL != 300 {
+		t.Fatalf("preview = %+v", preview)
+	}
+	if !strings.Contains(strings.Join(preview.Warnings, " "), "turns the proxy off") {
+		t.Errorf("warnings = %v", preview.Warnings)
+	}
+	for _, m := range methods(backend) {
+		if m == "UpdateDNSRecord" || m == "CreateDNSRecord" {
+			t.Fatalf("a preview wrote: %v", methods(backend))
+		}
+	}
+	// A refused address is refused in a preview too.
+	args["content"] = "203.0.113.10"
+	if _, _, refused := failure(callTool(loadedPlugin(t, &fakeBackend{}), "upsert_a_record", args)); !refused {
+		t.Error("a preview of a public address must be refused")
+	}
+}
+
+func TestUpsertPreviewWithoutACredentialIsTheRequestAlone(t *testing.T) {
+	bare := New()
+	if _, err := bare.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	preview := decode[DryRunPreview](t, mustCall(t, bare, "upsert_a_record", map[string]any{"zone_id": "z", "name": "app", "content": "100.64.0.10", argDryRun: true}))
+	if !preview.DryRun || !strings.Contains(strings.Join(preview.Warnings, " "), "no before to compare") {
+		t.Fatalf("preview = %+v", preview)
 	}
 }

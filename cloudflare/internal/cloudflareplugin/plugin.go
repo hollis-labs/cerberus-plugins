@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
+	"regexp"
+	"sync"
 	"syscall"
 
 	cerbplugin "github.com/hollis-labs/cerberus/pkg/plugin"
@@ -33,7 +36,9 @@ type Plugin struct {
 	newBackend func(apiToken string) Backend
 	config     subprocess.ConfigReader
 	backend    Backend
-	scrub      scrubber
+
+	mu    sync.Mutex
+	scrub scrubber
 }
 
 var (
@@ -74,7 +79,9 @@ func (p *Plugin) Init(_ context.Context, params subprocess.InitParams) (subproce
 // need no credential and keep working.
 func (p *Plugin) Load(context.Context) (subprocess.LoadResult, error) {
 	token := p.token()
+	p.mu.Lock()
 	p.scrub = newScrubber(token)
+	p.mu.Unlock()
 	if p.backend == nil && token != "" {
 		p.backend = p.newBackend(token)
 	}
@@ -111,9 +118,14 @@ func (p *Plugin) token() string {
 // contract declares each a non-read effect with a preview, and
 // TestWriteOperationsAreExactlyTheAckGatedOnes holds the two in step.
 var writeOperations = map[string]bool{
-	"create_zone":       true,
-	"create_dns_record": true,
-	"delete_dns_record": true,
+	"upsert_a_record":      true,
+	"create_r2_credential": true,
+	"revoke_r2_credential": true,
+	"create_r2_bucket":     true,
+	"delete_r2_bucket":     true,
+	"create_zone":          true,
+	"create_dns_record":    true,
+	"delete_dns_record":    true,
 }
 
 func (p *Plugin) MCPCallTool(ctx context.Context, req subprocess.MCPCallRequest) (subprocess.MCPCallResult, error) {
@@ -121,12 +133,53 @@ func (p *Plugin) MCPCallTool(ctx context.Context, req subprocess.MCPCallRequest)
 	if err == nil {
 		return withOperationTelemetry(req, result), nil
 	}
+	scrub := p.scrubber()
 	// The code is read before scrubbing, which drops the chain; the message
 	// that carries it is scrubbed like any other.
 	if code := errorCode(err); code != "" {
-		return cerbplugin.ErrorResult(code, p.scrub.text(err.Error())), nil
+		return cerbplugin.ErrorResult(code, scrub.text(err.Error())), nil
 	}
-	return result, p.scrub.err(err)
+	return result, scrub.err(err)
+}
+
+func (p *Plugin) scrubber() scrubber {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.scrub
+}
+
+// register adds a value minted during this process to what is scrubbed from
+// every later error, so a credential that came back once cannot surface again
+// in text composed from a later failure. Cerberus's own request scope cannot
+// learn it: a plugin has no channel to hand the host a value at call time, which
+// is why the result field is the only place it appears.
+func (p *Plugin) register(secret string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.scrub = p.scrub.with(secret)
+}
+
+var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+
+// optionalID reads an identifier that may be absent, refusing one that could
+// not be a Cloudflare id (and so could not escape its path segment).
+func optionalID(a *argMap, key string) string {
+	v := a.str(key)
+	if v != "" && !idPattern.MatchString(v) {
+		a.problems = append(a.problems, key+" is not a valid Cloudflare id")
+		return ""
+	}
+	return v
+}
+
+// requiredID is optionalID for an identifier the call cannot do without.
+func requiredID(a *argMap, key string) string {
+	v := a.required(key)
+	if v != "" && !idPattern.MatchString(v) {
+		a.problems = append(a.problems, key+" is not a valid Cloudflare id")
+		return ""
+	}
+	return v
 }
 
 // errorCode is the Cerberus code for a failed call: a missing token is
@@ -134,11 +187,16 @@ func (p *Plugin) MCPCallTool(ctx context.Context, req subprocess.MCPCallRequest)
 // unavailable. Anything the API answered stays uncoded.
 func errorCode(err error) cerbplugin.ErrorCode {
 	var coded *cerbplugin.CodedError
+	var apiErr *apiError
 	switch {
 	case errors.As(err, &coded):
 		return coded.Code
 	case errors.Is(err, errMissingCredential):
 		return cerbplugin.ErrorCredentialMissing
+	case errors.As(err, &apiErr) && apiErr.Status == http.StatusUnauthorized:
+		return cerbplugin.ErrorCredentialMissing
+	case errors.As(err, &apiErr) && (apiErr.Status == http.StatusNotFound || apiErr.Status == http.StatusBadRequest):
+		return cerbplugin.ErrorInvalidArgs
 	case isUnreachable(err):
 		return cerbplugin.ErrorUnavailable
 	}
@@ -179,6 +237,16 @@ func (p *Plugin) call(ctx context.Context, req subprocess.MCPCallRequest) (subpr
 	}
 
 	switch op.Name {
+	case "verify_token":
+		accountID := optionalID(args, "account_id")
+		if err := args.err(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		if err := p.ready(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		return marshalResult(p.backend.VerifyToken(ctx, accountID))
+
 	case "list_zones":
 		if err := p.ready(); err != nil {
 			return subprocess.MCPCallResult{}, err
@@ -253,6 +321,147 @@ func (p *Plugin) call(ctx context.Context, req subprocess.MCPCallRequest) (subpr
 			return subprocess.MCPCallResult{}, err
 		}
 		return marshalResult(DeletedRecord{Deleted: true, ZoneID: zoneID, RecordID: recordID}, nil)
+
+	case "list_r2_buckets":
+		accountID := requiredID(args, "account_id")
+		jurisdiction := args.oneOf("jurisdiction", jurisdictions)
+		if err := args.err(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		if err := p.ready(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		return marshalResult(p.backend.ListBuckets(ctx, accountID, jurisdiction))
+
+	case "create_r2_bucket":
+		accountID := requiredID(args, "account_id")
+		req := BucketRequest{
+			Name:         bucketName(args, "name"),
+			Jurisdiction: args.oneOf("jurisdiction", jurisdictions),
+			LocationHint: args.oneOf("location_hint", locationHints),
+			StorageClass: args.oneOf("storage_class", storageClasses),
+		}
+		if err := args.err(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		if dryRun {
+			return marshalResult(p.createBucketPreview(ctx, accountID, req), nil)
+		}
+		if err := p.ready(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		return marshalResult(p.backend.CreateBucket(ctx, accountID, req))
+
+	case "delete_r2_bucket":
+		accountID := requiredID(args, "account_id")
+		name := bucketName(args, "name")
+		jurisdiction := args.oneOf("jurisdiction", jurisdictions)
+		if err := args.err(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		if dryRun {
+			return marshalResult(p.deleteBucketPreview(ctx, accountID, name, jurisdiction), nil)
+		}
+		if err := p.ready(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		if err := p.backend.DeleteBucket(ctx, accountID, name, jurisdiction); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		return marshalResult(BucketDeleted{Deleted: true, AccountID: accountID, Name: name, Jurisdiction: jurisdiction}, nil)
+
+	case "create_r2_credential":
+		accountID := requiredID(args, "account_id")
+		req := CredentialRequest{
+			Bucket:       bucketName(args, "bucket"),
+			Jurisdiction: args.oneOf("jurisdiction", jurisdictions),
+			Permission:   args.oneOf("permission", permissions),
+		}
+		if req.Permission == "" {
+			req.Permission = PermissionReadWrite
+		}
+		if err := args.err(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		if dryRun {
+			return marshalResult(p.createCredentialPreview(ctx, accountID, req), nil)
+		}
+		if err := p.ready(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		// A typo in the bucket name must not mint a key for a bucket that
+		// does not exist, or for a different one made later under that name.
+		buckets, err := p.backend.ListBuckets(ctx, accountID, req.Jurisdiction)
+		if err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		if !hasBucket(buckets, req.Bucket) {
+			return subprocess.MCPCallResult{}, cerbplugin.WithCode(cerbplugin.ErrorInvalidArgs,
+				fmt.Errorf("no R2 bucket named %s exists in this account and jurisdiction; no credential was minted", req.Bucket))
+		}
+		minted, err := p.backend.CreateR2Credential(ctx, accountID, req)
+		if err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		// Registered before the result is built, so nothing composed after
+		// this point can carry the value into an error.
+		p.register(minted.AccessKeyValue)
+		minted.Note = credentialNote
+		return marshalResult(minted, nil)
+
+	case "revoke_r2_credential":
+		accountID := requiredID(args, "account_id")
+		accessKeyID := requiredID(args, "access_key_id")
+		if err := args.err(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		if dryRun {
+			return marshalResult(p.revokeCredentialPreview(ctx, accountID, accessKeyID), nil)
+		}
+		if err := p.ready(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		info, err := p.backend.GetR2Credential(ctx, accountID, accessKeyID)
+		if err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		if !mintedByThisPlugin(info) {
+			return subprocess.MCPCallResult{}, cerbplugin.WithCode(cerbplugin.ErrorInvalidArgs,
+				fmt.Errorf("token %s was not minted by create_r2_credential, so revoke_r2_credential will not touch it; revoke it in the Cloudflare dashboard if that is intended", accessKeyID))
+		}
+		if err := p.backend.RevokeR2Credential(ctx, accountID, accessKeyID); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		return marshalResult(CredentialRevoked{Revoked: true, AccountID: accountID, AccessKeyID: accessKeyID}, nil)
+
+	case "upsert_a_record":
+		zoneID := requiredID(args, "zone_id")
+		name := args.required("name")
+		if name != "" && !recordNamePattern.MatchString(name) {
+			args.problems = append(args.problems, "name must be a host name such as app, app.example.com or @")
+		}
+		content := args.required("content")
+		ttl := args.intPtr("ttl")
+		if ttl != nil && *ttl != 1 && (*ttl < 60 || *ttl > 86400) {
+			args.problems = append(args.problems, "ttl must be 1 (automatic) or between 60 and 86400 seconds")
+		}
+		if args.boolean("proxied") {
+			args.problems = append(args.problems, "upsert_a_record is always DNS-only; proxied cannot be turned on")
+		}
+		if err := args.err(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		if err := requireTailscaleAddress(content); err != nil {
+			return subprocess.MCPCallResult{}, cerbplugin.WithCode(cerbplugin.ErrorInvalidArgs, err)
+		}
+		if dryRun {
+			preview, err := p.upsertPreview(ctx, zoneID, name, content, ttl)
+			return marshalResult(preview, err)
+		}
+		if err := p.ready(); err != nil {
+			return subprocess.MCPCallResult{}, err
+		}
+		return marshalResult(p.upsert(ctx, zoneID, name, content, ttl))
 
 	default:
 		return subprocess.MCPCallResult{}, fmt.Errorf("operation %q is declared but not served", op.Name)
